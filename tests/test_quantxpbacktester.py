@@ -7,7 +7,6 @@ import unittest
 
 from quantxpbacktester import quantxpbacktester
 
-
 class TestQuantxpbacktester(unittest.TestCase):
     """Tests for `quantxpbacktester` package."""
 
