@@ -61,6 +61,7 @@ def test_order_execution_flow():
                     'price': twap_price
                 })
 
+
         # Process VWAP order
         if not vwap_order.is_complete:
             vwap_qty, vwap_price = vwap_order.execute(current_time, lob_snapshot)
