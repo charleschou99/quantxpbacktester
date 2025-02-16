@@ -1,7 +1,8 @@
 from quantxpbacktester.data.Alpaca import AlpacaDataClient
 from quantxpbacktester.signals.ValueCaptureStrategy import *
 from quantxpbacktester.backtester.backtester import *
-# Initialize components
+
+# Fetch data
 data_client = AlpacaDataClient()
 risk_params = {
     'target_vol': 0.15,  # 15% annualized volatility target
@@ -24,17 +25,15 @@ corporate_actions = data_client.fetch_corporate_actions(
     end_date='2023-12-31'
 )
 
-# Initialize strategy and backtester
+# Initialize components
+data_handler = DataHandler(historical_data, corporate_actions)
 strategy = QuantValueCaptureStrategy(risk_params)
-engine = BacktestEngine(
-    data_handler=DataHandler(historical_data),
-    strategy=strategy,
-    risk_params=risk_params
-)
+engine = BacktestEngine(data_handler, strategy)
 
 # Run backtest
 engine.run()
 
-# Analyze results
-metrics = AdvancedMetrics(engine.portfolio, benchmark=historical_data['close'])
-report = metrics.full_report()
+# Generate report
+metrics = AdvancedMetrics(engine.portfolio)
+print("Backtest Results:")
+print(pd.Series(metrics.full_report()))

@@ -16,24 +16,28 @@ class QuantValueCaptureStrategy:
         self.risk_params = risk_params
         self.dividend_lookahead = 5  # Days ahead to consider dividends
 
-    def generate_signals(self, historical_data: pd.DataFrame,
+    """Corporate action-aware strategy using pre-adjusted data"""
+
+    def generate_signals(self,
+                         historical_data: pd.DataFrame,
                          corporate_actions: pd.DataFrame) -> dict[str, float]:
-        """
-        Generate signals using integrated analysis
-        Returns: Dictionary of {asset: target_position}
-        """
-        # Feature Engineering
-        df = self._calculate_features(historical_data)
-        ca_df = self._process_corporate_actions(corporate_actions)
+        # Feature engineering
+        features = pd.DataFrame(index=historical_data.index)
+        features['returns'] = historical_data['close'].pct_change()
+        features['volume_ma'] = historical_data['volume'].rolling(20).mean()
 
-        merged = df.join(ca_df, how='left')
+        # Dividend features
+        features['dividend_pending'] = corporate_actions['dividend'].shift(-5).fillna(0)
 
-        # Signal Components
-        signals = self._technical_signals(merged)
-        fundamental = self._fundamental_signals(merged)
-        risk_adjusted = self._risk_management(merged, signals)
+        # Generate signals
+        signals = np.where(
+            (features['returns'] > 0) &
+            (features['volume_ma'] > 1.2 * features['volume_ma'].shift(5)) &
+            (features['dividend_pending'] > 0),
+            1, 0
+        )
 
-        return risk_adjusted
+        return {'equity': signals[-1]}
 
     def _calculate_features(self, data: pd.DataFrame) -> pd.DataFrame:
         """Create multi-timeframe features"""
