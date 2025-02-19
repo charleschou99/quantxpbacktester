@@ -1,106 +1,351 @@
-import pandas as pd
 import numpy as np
-from scipy.stats import skew, kurtosis
-from typing import Dict, Optional, List
-import datetime
+import pandas as pd
+import datetime as dt
 
-class DataHandler:
-    """Handles pre-adjusted data from Alpaca with corporate action metadata"""
+class Order:
+    """
+    Institutional-style Order class
+    - For now, we assume all fills occur at VWAP for the bar in which the order is submitted.
+    - We track the side (buy/sell), quantity, symbol, and fill details.
+    """
 
-    def __init__(self, ohlcv: pd.DataFrame, corporate_actions: pd.DataFrame):
-        self.data = self._validate_data(ohlcv)
-        self.corporate_actions = self._process_corporate_actions(corporate_actions)
+    def __init__(self, symbol: str, side: str, quantity: float, timestamp: pd.Timestamp):
+        """
+        :param symbol: The symbol being traded (e.g., 'AAPL').
+        :param side: 'BUY' or 'SELL'.
+        :param quantity: The quantity of shares to trade.
+        :param timestamp: The bar timestamp at which the order is placed.
+        """
+        self.symbol = symbol
+        self.side = side.upper()
+        self.quantity = quantity
+        self.timestamp = timestamp
+        self.fill_price = None
+        self.is_filled = False
 
-    def _validate_data(self, data: pd.DataFrame) -> pd.DataFrame:
-        required_cols = {'open', 'high', 'low', 'close', 'volume'}
-        missing = required_cols - set(data.columns)
-        if missing:
-            raise ValueError(f"Missing columns: {missing}")
-        return data.dropna()
-
-    def _process_corporate_actions(self, ca: pd.DataFrame) -> pd.DataFrame:
-        """Align corporate actions with price data index"""
-        return ca.reindex(self.data.index).ffill().bfill()
-
-
-class Portfolio:
-    """Tracks positions and value using pre-adjusted data"""
-
-    def __init__(self, initial_capital: float):
-        self.capital = initial_capital
-        self.positions: Dict[str, float] = {}
-        self.history = pd.DataFrame(columns=['total'])
-
-    def update(self, timestamp: datetime, trades: Dict[str, float], prices: pd.Series):
-        """Update portfolio with new trades"""
-        for asset, delta in trades.items():
-            self.positions[asset] = self.positions.get(asset, 0) + delta
-            self.capital -= delta * prices[asset]
-
-        # Record portfolio value
-        position_value = sum(qty * prices.get(asset, 0)
-                             for asset, qty in self.positions.items())
-        self.history.loc[timestamp] = self.capital + position_value
+    def fill_order(self, fill_price: float):
+        """
+        Fill the order at the provided fill price (in this backtester, we use VWAP).
+        """
+        self.fill_price = fill_price
+        self.is_filled = True
 
 
-class BacktestEngine:
-    """Main backtesting execution"""
+class RiskManager:
+    """
+    Basic Risk Manager that can be expanded to include advanced checks, e.g.:
+    - Sector exposures
+    - Factor exposures
+    - Dollar VaR / Beta constraints
+    - etc.
+    """
 
-    def __init__(self, data_handler: DataHandler, strategy):
-        self.data = data_handler.data
-        self.strategy = strategy
-        self.portfolio = Portfolio(1_000_000)
-        self.ca = data_handler.corporate_actions
+    def __init__(self, max_notional: float = 1e7, max_position_percentage: float = 0.1):
+        """
+        :param max_notional: Maximum total notional portfolio value allowed.
+        :param max_position_percentage: Maximum fraction of total portfolio per position.
+        """
+        self.max_notional = max_notional
+        self.max_position_percentage = max_position_percentage
 
-    def run(self):
-        """Core backtest loop"""
-        for idx, row in self.data.iterrows():
-            # Get historical data up to current time
-            history = self.data.loc[:idx]
+    def check_risk(self, current_positions: dict, proposed_trade: Order, current_price: float) -> bool:
+        """
+        Example risk check to ensure we are not exceeding max notional or position-based constraints.
+        :param current_positions: A dict of {symbol: (quantity, average_cost)} describing the current holdings.
+        :param proposed_trade: The Order object representing the trade we want to execute.
+        :param current_price: The current price (or vwap) for that symbol.
+        :return: True if the trade passes risk checks, False otherwise.
+        """
+        # 1) Check total notional
+        #    Evaluate total portfolio notional + proposed trade notional
+        total_portfolio_value = 0
+        for sym, (qty, avg_px) in current_positions.items():
+            total_portfolio_value += qty * avg_px
 
-            # Generate signals (using corporate actions data)
-            signals = self.strategy.generate_signals(
-                historical_data=history,
-                corporate_actions=self.ca.loc[:idx]
-            )
+        if proposed_trade.side == 'BUY':
+            proposed_notional = proposed_trade.quantity * current_price
+        else:
+            proposed_notional = -proposed_trade.quantity * current_price  # negative notion for sells
 
-            # Execute trades at current prices
-            self.portfolio.update(
-                timestamp=idx,
-                trades=signals,
-                prices=row[['open', 'high', 'low', 'close']].mean()  # VWAP approximation
-            )
+        if abs(total_portfolio_value + proposed_notional) > self.max_notional:
+            return False
+
+        # 2) Check position-based constraints
+        #    Evaluate the position for that symbol
+        current_qty, _ = current_positions.get(proposed_trade.symbol, (0, current_price))
+        new_qty = current_qty + proposed_trade.quantity if proposed_trade.side == 'BUY' else current_qty - proposed_trade.quantity
+        new_position_notional = new_qty * current_price
+
+        if abs(new_position_notional) > self.max_notional * self.max_position_percentage:
+            return False
+
+        return True
 
 
-class AdvancedMetrics:
-    """Performance analytics with type-safe calculations"""
+class Backtester:
+    """
+    A higher-grade backtester that:
+    1. Takes a DataFrame with columns: ['timestamp', 'open', 'high', 'low', 'close', 'volume', 'vwap', 'signal', ...]
+    2. Uses 'signal' to determine position sizes (continuous or discrete).
+    3. Fills orders at vwap for each bar.
+    4. Tracks PnL, risk metrics, and advanced performance metrics.
+    """
 
-    def __init__(self, portfolio: Portfolio):
-        self.returns = self._calculate_returns(portfolio)
+    def __init__(self, data: pd.DataFrame, symbol: str, initial_capital: float = 1e6,
+                 risk_manager: RiskManager = None):
+        """
+        :param data: DataFrame for a single symbol containing the necessary columns.
+        :param symbol: The symbol being tested (e.g., 'AAPL').
+        :param initial_capital: Starting capital in USD.
+        :param risk_manager: A RiskManager instance (can be None to skip risk checks).
+        """
+        self.data = data.copy()
+        self.symbol = symbol
+        self.initial_capital = initial_capital
+        self.cash = initial_capital
+        self.risk_manager = risk_manager if risk_manager else RiskManager()
 
-    def _calculate_returns(self, portfolio: Portfolio) -> pd.Series:
-        """Calculate daily returns from portfolio history"""
-        return portfolio.history['total'].pct_change().dropna()
+        # Current positions: dict of {symbol: (quantity, average_cost)}
+        # In a multi-symbol scenario, you’d replicate or expand logic for each symbol.
+        self.positions = {symbol: (0.0, 0.0)}
 
-    def full_report(self) -> Dict[str, float]:
-        """Generate complete performance report"""
+        # For tracking trades & performance
+        self.order_history = []
+        self.equity_curve = []
+
+        # Ensure timestamp is a pandas DateTimeIndex
+        if not pd.api.types.is_datetime64_any_dtype(self.data.index):
+            if 'timestamp' in self.data.columns:
+                self.data.set_index('timestamp', inplace=True)
+            else:
+                raise ValueError("Data must have a 'timestamp' column or a DateTimeIndex.")
+
+        # Sort by index just in case
+        self.data.sort_index(inplace=True)
+
+        # Fill missing values if needed
+        self.data.fillna(method='ffill', inplace=True)
+        self.data.fillna(method='bfill', inplace=True)
+
+    def run_backtest(self):
+        """
+        Core loop that runs the backtest bar by bar.
+        For each bar, determines the order quantity from the signal and attempts to execute that order.
+        """
+        for timestamp, row in self.data.iterrows():
+            # 1) Determine the desired position from the signal
+            #    For example, a signal of 0.3 => 30% of max capital in that symbol
+            #    Or interpret signal in your own logic
+            qty = row['order']
+            vwap_price = row['vwap']  # fill price
+
+            # Desired notional or size
+            # E.g. if signal ∈ [-1, 1], interpret it as fraction of total capital
+            desired_notional = vwap_price * qty
+            current_qty, avg_px = self.positions[self.symbol]
+            current_notional = current_qty * vwap_price
+
+            # Position difference
+            trade_notional_diff = desired_notional - current_notional
+            side = 'BUY' if trade_notional_diff > 0 else 'SELL'
+
+            # Convert to absolute quantity (round for realism)
+            quantity_diff = abs(trade_notional_diff) / vwap_price if vwap_price != 0 else 0
+            quantity_diff = np.floor(quantity_diff)
+
+            # 2) Create an Order if quantity_diff is non-trivial
+            if quantity_diff > 0.0:
+                order = Order(self.symbol, side, quantity_diff, timestamp)
+
+                # 3) Risk check
+                if self.risk_manager.check_risk(self.positions, order, vwap_price):
+                    # 4) Execute the order
+                    order.fill_order(vwap_price)
+                    self.order_history.append(order)
+
+                    # 5) Update cash and positions
+                    self._update_positions(order)
+                else:
+                    # Risk manager blocked the trade
+                    pass
+
+            # 6) Mark portfolio value at the end of the bar
+            total_portfolio_value = self._calculate_portfolio_value(vwap_price)
+            self.equity_curve.append((timestamp, total_portfolio_value))
+
+        self.equity_curve = pd.DataFrame(self.equity_curve, columns=['timestamp', 'equity']).set_index('timestamp')
+
+    def _update_positions(self, order: Order):
+        """
+        Updates self.positions and self.cash after a fill.
+        """
+        current_qty, current_avg_px = self.positions[order.symbol]
+        fill_cost = order.fill_price * order.quantity
+
+        if order.side == 'BUY':
+            # Weighted average cost for new position
+            total_cost = current_qty * current_avg_px + fill_cost
+            new_qty = current_qty + order.quantity
+            new_avg_px = total_cost / new_qty if new_qty != 0 else 0
+            self.positions[order.symbol] = (new_qty, new_avg_px)
+            self.cash -= fill_cost
+        else:  # SELL
+            # Realize PnL portion
+            new_qty = current_qty - order.quantity
+            realized_pnl = (order.fill_price - current_avg_px) * order.quantity
+            self.cash += fill_cost
+            if new_qty == 0:
+                # Flatten the position
+                self.positions[order.symbol] = (0.0, 0.0)
+            else:
+                self.positions[order.symbol] = (new_qty, current_avg_px)
+
+    def _calculate_portfolio_value(self, price: float) -> float:
+        """
+        Calculates the total value of the portfolio = sum of position + cash.
+        """
+        qty, avg_px = self.positions[self.symbol]
+        position_value = qty * price
+        return self.cash + position_value
+
+    def compute_performance_metrics(self, freq='D') -> dict:
+        """
+        Calculates hedge-fund style performance metrics:
+        - CAGR
+        - Sharpe Ratio
+        - Sortino Ratio
+        - Maximum Drawdown
+        :param freq: 'D' for daily, 'M' for monthly, etc.
+        :return: dict containing performance metrics
+        """
+        # 1) Create returns series
+        eq_series = self.equity_curve['equity']
+        rets = eq_series.pct_change().fillna(0)
+
+        # 2) Annualization factor
+        if freq == 'D':
+            annual_factor = 252
+        elif freq == 'W':
+            annual_factor = 52
+        elif freq == 'M':
+            annual_factor = 12
+        else:
+            annual_factor = 252  # default daily
+
+        # 3) CAGR
+        #    compound annual growth rate from start to end
+        start_val = eq_series.iloc[0]
+        end_val = eq_series.iloc[-1]
+        n_years = (eq_series.index[-1] - eq_series.index[0]).days / 365
+        cagr = (end_val / start_val) ** (1 / n_years) - 1 if n_years > 0 else 0
+
+        # 4) Sharpe Ratio
+        mean_ret = rets.mean() * annual_factor
+        std_ret = rets.std() * np.sqrt(annual_factor)
+        sharpe = mean_ret / std_ret if std_ret != 0 else 0
+
+        # 5) Sortino Ratio
+        downside_rets = rets[rets < 0]
+        std_downside = downside_rets.std() * np.sqrt(annual_factor)
+        sortino = mean_ret / std_downside if std_downside != 0 else 0
+
+        # 6) Max Drawdown
+        rolling_max = eq_series.cummax()
+        drawdown = (eq_series - rolling_max) / rolling_max
+        max_dd = drawdown.min()
+
         return {
-            'sharpe': self._annualized_sharpe(),
-            'sortino': self._sortino_ratio(),
-            'max_dd': self._max_drawdown(),
-            'skewness': float(skew(self.returns)),
-            'kurtosis': float(kurtosis(self.returns))
+            'CAGR': cagr,
+            'Sharpe': sharpe,
+            'Sortino': sortino,
+            'MaxDrawdown': max_dd,
+            'AnnualReturn': mean_ret,  # simpler annualized return
         }
 
-    def _annualized_sharpe(self) -> float:
-        excess_returns = self.returns - 0.02 / 252
-        return excess_returns.mean() / excess_returns.std() * np.sqrt(252)
+    # ========== PLACEHOLDER: future improvements / expansions ==========
 
-    def _sortino_ratio(self) -> float:
-        downside_returns = self.returns[self.returns < 0]
-        return self.returns.mean() / downside_returns.std() * np.sqrt(252)
+    def plot_equity_curve(self):
+        """
+        Plot the equity curve using Plotly.
+        This displays an interactive chart of portfolio equity over time.
+        """
+        import plotly.graph_objects as go
 
-    def _max_drawdown(self) -> float:
-        cumulative = (1 + self.returns).cumprod()
-        peak = cumulative.expanding(min_periods=1).max()
-        return (cumulative / peak - 1).min()
+
+        if self.equity_curve is None or self.equity_curve.empty:
+            print("No equity curve data to plot. Please run the backtest first.")
+            return
+
+        # Build the figure
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(
+            x=self.equity_curve.index,
+            y=self.equity_curve['equity'],
+            mode='lines',
+            name='Equity'
+        ))
+
+        fig.update_layout(
+            title='Equity Curve',
+            xaxis_title='Date',
+            yaxis_title='Equity (USD)',
+            hovermode='x unified'
+        )
+
+        # Display the interactive chart in a browser or notebook
+        return fig
+
+    def run_sensitivity_analysis(self):
+        """
+        Placeholder function for advanced scenario analysis,
+        e.g. parameter sweeps, stress tests, etc.
+        """
+        pass
+
+    def export_results(self):
+        """
+        Placeholder function to export trades, performance metrics, etc. to CSV or DB.
+        """
+        pass
+
+
+# ========================== USAGE EXAMPLE ===========================
+
+if __name__ == "__main__":
+    # Sample usage:
+    # Suppose you have a DataFrame 'df' containing columns:
+    # [timestamp, open, high, low, close, volume, vwap, signal, ...]
+    # from your multi-factor script. We assume 'timestamp' is an index or column.
+
+    # df = generate_signals_for_symbol('AAPL')  # from the previously shown multi_factor_signal.py
+
+    # For demonstration, let's create a mock DataFrame:
+    dates = pd.date_range(start='2023-01-01', periods=100, freq='D')
+    mock_data = {
+        'open': np.random.uniform(100, 110, 100),
+        'high': np.random.uniform(110, 120, 100),
+        'low': np.random.uniform(90, 100, 100),
+        'close': np.random.uniform(95, 115, 100),
+        'volume': np.random.randint(10000, 50000, 100),
+        'vwap': np.random.uniform(95, 115, 100),
+        'signal': np.random.uniform(-1, 1, 100)
+    }
+    df = pd.DataFrame(mock_data, index=dates)
+
+    # Initialize backtester
+    risk_mgr = RiskManager(max_notional=1e6, max_position_percentage=0.2)
+    bt = Backtester(df, symbol='FAKE', initial_capital=1e5, risk_manager=risk_mgr)
+
+    # Run the backtest
+    bt.run_backtest()
+
+    # Compute performance
+    metrics = bt.compute_performance_metrics(freq='D')
+    print("=== Performance Metrics ===")
+    for k, v in metrics.items():
+        print(f"{k}: {v:.4f}")
+
+    # Example placeholder for future expansions
+    # bt.plot_equity_curve()
+    # bt.run_sensitivity_analysis()
+    # bt.export_results()

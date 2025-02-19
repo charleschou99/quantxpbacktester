@@ -6,6 +6,7 @@ import os
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 from typing import Dict, List, Optional
+from concurrent.futures import ThreadPoolExecutor
 
 API_KEY_ID = os.environ.get("ALPACA_KEY")
 API_SECRET_KEY = os.environ.get("ALPACA_SECRET")
@@ -113,6 +114,12 @@ class AlpacaDataClient:
                 final_df.to_parquet(cache_path)
             return final_df
         return pd.DataFrame()
+
+    def fetch_multiple_symbols(self, symbols: List[str], **kwargs):
+        with ThreadPoolExecutor(max_workers=5) as executor:
+            futures = [executor.submit(self.fetch_bars, sym, **kwargs)
+                       for sym in symbols]
+            return {f.result().index[0].symbol: f.result() for f in futures}
 
     def _process_bars(self, bars: List[Dict], timeframe: str, extended_hours: bool) -> pd.DataFrame:
         """Process raw bars with microstructure features"""
@@ -240,3 +247,4 @@ class AlpacaDataClient:
             cache_dir,
             f"{symbol}_{timeframe}_{start}_{end}.parquet"
         )
+
