@@ -1,6 +1,8 @@
 import numpy as np
 import pandas as pd
 import datetime as dt
+import os
+import pickle
 
 class Order:
     """
@@ -91,7 +93,7 @@ class Backtester:
     4. Tracks PnL, risk metrics, and advanced performance metrics.
     """
 
-    def __init__(self, data: pd.DataFrame, symbol: str, initial_capital: float = 1e6,
+    def __init__(self, data: pd.DataFrame, frequency:str, symbol: str, initial_capital: float = 1e6,
                  risk_manager: RiskManager = None):
         """
         :param data: DataFrame for a single symbol containing the necessary columns.
@@ -101,6 +103,7 @@ class Backtester:
         """
         self.data = data.copy()
         self.symbol = symbol
+        self.frequency = frequency
         self.initial_capital = initial_capital
         self.cash = initial_capital
         self.risk_manager = risk_manager if risk_manager else RiskManager()
@@ -110,8 +113,10 @@ class Backtester:
         self.positions = {symbol: (0.0, 0.0)}
 
         # For tracking trades & performance
+        self.file_name = ""
         self.order_history = []
         self.equity_curve = []
+        self.risk_metrics = {}
 
         # Ensure timestamp is a pandas DateTimeIndex
         if not pd.api.types.is_datetime64_any_dtype(self.data.index):
@@ -175,6 +180,25 @@ class Backtester:
             self.equity_curve.append((timestamp, total_portfolio_value))
 
         self.equity_curve = pd.DataFrame(self.equity_curve, columns=['timestamp', 'equity']).set_index('timestamp')
+        self.risk_metrics = self.compute_performance_metrics()
+
+        # 1) Create data_cache folder if it doesn't exist
+        if not os.path.exists('data_cache'):
+            os.makedirs('data_cache')
+
+        # 2) Prepare results dictionary
+        results = {
+            'equity_curve': self.equity_curve,
+            'order_history': self.order_history,
+            'risk_metrics': self.risk_metrics
+        }
+
+        # 3) Pickle the results
+        self.file_name = self.symbol + "_" + self.frequency + "_" + dt.datetime.strftime(dt.datetime.now(), "%Y%m%d_%H%M") + ".pkl"
+        with open(os.path.join('data_cache', self.file_name), 'wb') as f:
+            pickle.dump(results, f)
+
+        print(f"Backtest and risk metrics successfully saved to data_cache/{self.file_name}.pkl")
 
     def _update_positions(self, order: Order):
         """
@@ -209,7 +233,7 @@ class Backtester:
         position_value = qty * price
         return self.cash + position_value
 
-    def compute_performance_metrics(self, freq='D') -> dict:
+    def compute_performance_metrics(self) -> dict:
         """
         Calculates hedge-fund style performance metrics:
         - CAGR
@@ -223,6 +247,7 @@ class Backtester:
         eq_series = self.equity_curve['equity']
         rets = eq_series.pct_change().fillna(0)
 
+        freq = self.frequency
         # 2) Annualization factor
         if freq == 'D':
             annual_factor = 252
@@ -268,7 +293,7 @@ class Backtester:
             'Sharpe': sharpe,
             'Sortino': sortino,
             'MaxDrawdown': max_dd,
-            'AnnualReturn': mean_ret,  # simpler annualized return
+            'AnnualMeanReturn': mean_ret,  # simpler annualized return
         }
 
     # ========== PLACEHOLDER: future improvements / expansions ==========

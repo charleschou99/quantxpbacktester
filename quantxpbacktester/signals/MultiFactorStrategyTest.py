@@ -7,8 +7,8 @@ def main():
     # Parameters for data fetch
     symbol = "AAPL"
     period = 30
-    timeframe = "1H"
-    start_date = "2023-01-01"
+    timeframe = "1D"
+    start_date = "2020-01-01"
     end_date = "2024-12-31"
 
     print(f"Fetching Alpaca data for {symbol} from {start_date} to {end_date}...")
@@ -33,6 +33,7 @@ def main():
     # Instantiate our institutional-grade backtester
     backtester = Backtester(
         data=df_signals,
+        frequency=timeframe,
         symbol=symbol,
         initial_capital=1e5,
         risk_manager=risk_mgr
@@ -42,7 +43,7 @@ def main():
     backtester.run_backtest()
 
     # Compute advanced performance metrics
-    metrics = backtester.compute_performance_metrics(freq='1H')
+    metrics = backtester.risk_metrics
     print("\n=== Performance Metrics ===")
     for k, v in metrics.items():
         print(f"{k}: {v:.4f}")
