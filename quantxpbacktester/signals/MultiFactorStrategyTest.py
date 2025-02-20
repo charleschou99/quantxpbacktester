@@ -6,9 +6,9 @@ from quantxpbacktester.backtester.backtester import *
 def main():
     # Parameters for data fetch
     symbol = "AAPL"
-    period = 10
-    timeframe = "1Day"
-    start_date = "2020-01-01"
+    period = 30
+    timeframe = "1H"
+    start_date = "2023-01-01"
     end_date = "2024-12-31"
 
     print(f"Fetching Alpaca data for {symbol} from {start_date} to {end_date}...")
@@ -22,7 +22,7 @@ def main():
     )
 
     df_signals = df_signals.dropna()
-    df_signals = create_orders(df_signals, use_kelly=True, p_win=0.6)
+    df_signals = create_orders(df_signals, use_kelly=True, p_win=0.6, base_risk=0.05)
 
     print("Data fetched and signal generated. Head of DataFrame:")
     print(df_signals.head())
@@ -42,7 +42,7 @@ def main():
     backtester.run_backtest()
 
     # Compute advanced performance metrics
-    metrics = backtester.compute_performance_metrics(freq='D')
+    metrics = backtester.compute_performance_metrics(freq='1H')
     print("\n=== Performance Metrics ===")
     for k, v in metrics.items():
         print(f"{k}: {v:.4f}")

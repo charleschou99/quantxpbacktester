@@ -1,11 +1,12 @@
 """
 GPT enhanced
+Forward Looking Strategy -> does not work
+THIS IS AN EXAMPLE
 """
 
 import numpy as np
 import pandas as pd
 from quantxpbacktester.data.Alpaca import AlpacaDataClient
-
 
 # Example role-play: You, as a lead quant at Millennium, are prototyping a multi-factor alpha.
 # This script fetches data from Alpaca (using your attached AlpacaDataClient) and builds
@@ -28,7 +29,7 @@ def compute_atr(df: pd.DataFrame, period: int = 14) -> pd.Series:
 
     tr = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
     atr = tr.rolling(period).mean()  # Simple moving average of TR
-    return atr.fillna(method='bfill')
+    return atr.fillna(method='ffill')
 
 def compute_kelly_fraction(p_win: float = 0.55, ratio_win_loss: float = 1.0, fraction_of_kelly: float = 1.0) -> float:
     """

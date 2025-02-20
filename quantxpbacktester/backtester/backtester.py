@@ -150,12 +150,13 @@ class Backtester:
             side = 'BUY' if trade_notional_diff > 0 else 'SELL'
 
             # Convert to absolute quantity (round for realism)
-            quantity_diff = abs(trade_notional_diff) / vwap_price if vwap_price != 0 else 0
-            quantity_diff = np.floor(quantity_diff)
+            # quantity_diff = abs(trade_notional_diff) / vwap_price if vwap_price != 0 else 0
+            # quantity_diff = np.floor(quantity_diff)
 
             # 2) Create an Order if quantity_diff is non-trivial
-            if quantity_diff > 0.0:
-                order = Order(self.symbol, side, quantity_diff, timestamp)
+            # if quantity_diff > 0.0:
+            if np.abs(qty) > 0.0:
+                order = Order(self.symbol, side, qty, timestamp)
 
                 # 3) Risk check
                 if self.risk_manager.check_risk(self.positions, order, vwap_price):
@@ -229,6 +230,14 @@ class Backtester:
             annual_factor = 52
         elif freq == 'M':
             annual_factor = 12
+        elif freq == '1Min':
+            annual_factor = 98280
+        elif freq == '15Min':
+            annual_factor = 6552
+        elif freq == '30Min':
+            annual_factor = 3276
+        elif freq == '1H':
+            annual_factor = 1638
         else:
             annual_factor = 252  # default daily
 
@@ -307,45 +316,3 @@ class Backtester:
         Placeholder function to export trades, performance metrics, etc. to CSV or DB.
         """
         pass
-
-
-# ========================== USAGE EXAMPLE ===========================
-
-if __name__ == "__main__":
-    # Sample usage:
-    # Suppose you have a DataFrame 'df' containing columns:
-    # [timestamp, open, high, low, close, volume, vwap, signal, ...]
-    # from your multi-factor script. We assume 'timestamp' is an index or column.
-
-    # df = generate_signals_for_symbol('AAPL')  # from the previously shown multi_factor_signal.py
-
-    # For demonstration, let's create a mock DataFrame:
-    dates = pd.date_range(start='2023-01-01', periods=100, freq='D')
-    mock_data = {
-        'open': np.random.uniform(100, 110, 100),
-        'high': np.random.uniform(110, 120, 100),
-        'low': np.random.uniform(90, 100, 100),
-        'close': np.random.uniform(95, 115, 100),
-        'volume': np.random.randint(10000, 50000, 100),
-        'vwap': np.random.uniform(95, 115, 100),
-        'signal': np.random.uniform(-1, 1, 100)
-    }
-    df = pd.DataFrame(mock_data, index=dates)
-
-    # Initialize backtester
-    risk_mgr = RiskManager(max_notional=1e6, max_position_percentage=0.2)
-    bt = Backtester(df, symbol='FAKE', initial_capital=1e5, risk_manager=risk_mgr)
-
-    # Run the backtest
-    bt.run_backtest()
-
-    # Compute performance
-    metrics = bt.compute_performance_metrics(freq='D')
-    print("=== Performance Metrics ===")
-    for k, v in metrics.items():
-        print(f"{k}: {v:.4f}")
-
-    # Example placeholder for future expansions
-    # bt.plot_equity_curve()
-    # bt.run_sensitivity_analysis()
-    # bt.export_results()
