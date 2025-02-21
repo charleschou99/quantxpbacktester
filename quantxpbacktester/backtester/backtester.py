@@ -212,8 +212,13 @@ class Backtester:
         #    - equity_curve is converted to JSON (string) via .to_json()
         #    - order_history is converted to a list of dicts via each Order's to_dict()
         #    - risk_metrics can be stored as-is if it's already a serializable dict
+
+        equity_curve = self.equity_curve.reset_index(names='Date', drop=False)
+        data = self.data.reset_index(names='Date', drop=False)
+
         results = {
-            'equity_curve': self.equity_curve.to_json(orient='records', date_format='iso'),
+            'data':data.to_json(orient='records', date_format='iso'),
+            'equity_curve': equity_curve.to_json(orient='records', date_format='iso'),
             'order_history': [o.to_dict() for o in self.order_history],
             'risk_metrics': self.risk_metrics
         }
