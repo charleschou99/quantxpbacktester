@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 import datetime as dt
 import os
-import pickle
+import json
 
 STOREPATH = os.path.join(r'C:\Users\charl\BacktestData', 'MultiFactor')
 
@@ -33,6 +33,19 @@ class Order:
         """
         self.fill_price = fill_price
         self.is_filled = True
+
+    def to_dict(self):
+        """
+        Convert the order object to a dictionary for serialization, logging, etc.
+        """
+        return {
+            "symbol": self.symbol,
+            "side": self.side,
+            "quantity": self.quantity,
+            "timestamp": self.timestamp.isoformat() if self.timestamp else None,
+            "fill_price": self.fill_price,
+            "is_filled": self.is_filled
+        }
 
 
 class RiskManager:
@@ -184,23 +197,41 @@ class Backtester:
         self.equity_curve = pd.DataFrame(self.equity_curve, columns=['timestamp', 'equity']).set_index('timestamp')
         self.risk_metrics = self.compute_performance_metrics()
 
-        # 1) Create data_cache folder if it doesn't exist
+        # 7) Save results
+        self.save_results_to_json()
+
+    def save_results_to_json(self):
+        """
+        Save backtest results (equity curve, order history, and risk metrics) as JSON.
+        """
+        # 1) Ensure the folder exists
         if not os.path.exists(STOREPATH):
             os.makedirs(STOREPATH)
 
-        # 2) Prepare results dictionary
+        # 2) Prepare the results dictionary
+        #    - equity_curve is converted to JSON (string) via .to_json()
+        #    - order_history is converted to a list of dicts via each Order's to_dict()
+        #    - risk_metrics can be stored as-is if it's already a serializable dict
         results = {
-            'equity_curve': self.equity_curve.to_json,
-            'order_history': self.order_history,
+            'equity_curve': self.equity_curve.to_json(orient='records', date_format='iso'),
+            'order_history': [o.to_dict() for o in self.order_history],
             'risk_metrics': self.risk_metrics
         }
 
-        # 3) Pickle the results
-        self.file_name = self.symbol + "_" + self.frequency + "_" + dt.datetime.strftime(dt.datetime.now(), "%Y%m%d_%H%M") + ".pkl"
-        with open(os.path.join(STOREPATH, self.file_name), 'wb') as f:
-            pickle.dump(results, f)
+        # 3) Build the file name with a time stamp, plus JSON suffix
+        #    e.g. "AAPL_1Day_20231005_1530.json"
+        file_name = (
+            f"{self.symbol}_{self.frequency}_"
+            f"{dt.datetime.now().strftime('%Y%m%d_%H%M')}.json"
+        )
+        self.file_name = file_name  # store this if you need reference
 
-        print(f"Backtest and risk metrics successfully saved to {self.file_name}.pkl")
+        # 4) Write the JSON file
+        file_path = os.path.join(STOREPATH, file_name)
+        with open(file_path, 'w') as f:
+            json.dump(results, f, indent=2)
+
+        print(f"Backtest and risk metrics successfully saved to {file_path}")
 
     def _update_positions(self, order: Order):
         """
