@@ -4,6 +4,8 @@ import datetime as dt
 import os
 import pickle
 
+STOREPATH = os.path.join(r'C:\Users\charl\BacktestData', 'MultiFactor')
+
 class Order:
     """
     Institutional-style Order class
@@ -183,22 +185,22 @@ class Backtester:
         self.risk_metrics = self.compute_performance_metrics()
 
         # 1) Create data_cache folder if it doesn't exist
-        if not os.path.exists('data_cache'):
-            os.makedirs('data_cache')
+        if not os.path.exists(STOREPATH):
+            os.makedirs(STOREPATH)
 
         # 2) Prepare results dictionary
         results = {
-            'equity_curve': self.equity_curve,
+            'equity_curve': self.equity_curve.to_json,
             'order_history': self.order_history,
             'risk_metrics': self.risk_metrics
         }
 
         # 3) Pickle the results
         self.file_name = self.symbol + "_" + self.frequency + "_" + dt.datetime.strftime(dt.datetime.now(), "%Y%m%d_%H%M") + ".pkl"
-        with open(os.path.join('data_cache', self.file_name), 'wb') as f:
+        with open(os.path.join(STOREPATH, self.file_name), 'wb') as f:
             pickle.dump(results, f)
 
-        print(f"Backtest and risk metrics successfully saved to data_cache/{self.file_name}.pkl")
+        print(f"Backtest and risk metrics successfully saved to {self.file_name}.pkl")
 
     def _update_positions(self, order: Order):
         """
@@ -249,11 +251,11 @@ class Backtester:
 
         freq = self.frequency
         # 2) Annualization factor
-        if freq == 'D':
+        if freq == '1D':
             annual_factor = 252
-        elif freq == 'W':
+        elif freq == '1W':
             annual_factor = 52
-        elif freq == 'M':
+        elif freq == '1M':
             annual_factor = 12
         elif freq == '1Min':
             annual_factor = 98280

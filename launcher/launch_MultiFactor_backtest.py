@@ -2,13 +2,17 @@
 
 import argparse
 import pandas as pd
+import os
 
 # Import your modules (adjust paths as needed)
 from quantxpbacktester.signals.MultiFactorStrategy import generate_signals_for_symbol, create_orders
 from quantxpbacktester.backtester.backtester import Backtester, RiskManager
 
+STOREPATH = os.path.join(r'C:\Users\charl\BacktestData', 'MultiFactor')
 
 def main():
+
+
     parser = argparse.ArgumentParser(
         description="Launch a Multi-Factor Backtest and return the result file name."
     )
@@ -17,7 +21,7 @@ def main():
     parser.add_argument("--end_date", type=str, default="2022-12-31", help="End date (YYYY-MM-DD).")
     parser.add_argument("--timeframe", type=str, default="1Day", help="Bar timeframe (e.g., 1Day, 1Min).")
     parser.add_argument("--capital", type=float, default=100000, help="Initial capital in USD.")
-    parser.add_argument("--freq", type=str, default="D", help="Frequency for performance metrics (D, W, M, 1Min...).")
+    # parser.add_argument("--freq", type=str, default="D", help="Frequency for performance metrics (D, W, M, 1Min...).")
     # parser.add_argument("--file_name", type=str, default="backtest_results.pkl",
     #                     help="File name in the data_cache folder to store results.")
 
@@ -58,7 +62,8 @@ def main():
     # This is how we "return" data from a script to an external caller.
     # Make sure your backtester writes to data_cache/<file_name> in the run_backtest() method.
     # e.g., "data_cache/backtest_results.pkl"
-    print(backtester.file_name)
+    file_path = os.path.join(STOREPATH, backtester.file_name)
+    print(file_path)
 
 
 if __name__ == "__main__":

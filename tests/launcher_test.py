@@ -27,7 +27,7 @@ def main():
         "--end_date", end_date,
         "--timeframe", timeframe,
         "--capital", str(capital),
-        "--freq", freq,
+        # "--freq", freq,
         # "--file_name", file_name
     ]
 
@@ -46,7 +46,6 @@ def main():
     except subprocess.CalledProcessError as e:
         print("An error occurred while running the backtest script:")
         print(e.stderr)
-
 
 if __name__ == "__main__":
     main()
