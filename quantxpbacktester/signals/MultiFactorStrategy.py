@@ -140,7 +140,7 @@ def create_orders(
     :param upper_threshold: Positive threshold above which we go long.
     :param lower_threshold: Negative threshold below which we go short.
     """
-    required_cols = [signal_col, 'high', 'low', 'close']
+    required_cols = [signal_col, 'high', 'low', 'close', 'vwap']
     for col in required_cols:
         if col not in df.columns:
             raise ValueError(f"Missing required column '{col}' in DataFrame.")
@@ -172,7 +172,7 @@ def create_orders(
             fraction_of_kelly=fraction_of_kelly
         )
         # e.g., clamp Kelly fraction if it’s extremely large
-        kelly_fraction = min(kelly_fraction, 2.0)  # example clamp
+        kelly_fraction = min(kelly_fraction, 10)  # example clamp
 
     # -----------------------------------------------------------------
     # 4) fraction_of_capital = min(1, base_risk / ATR) * kelly_fraction

@@ -7,7 +7,7 @@ def main():
     # Parameters for data fetch
     symbol = "AAPL"
     period = 30
-    timeframe = "1D"
+    timeframe = "1H"
     start_date = "2020-01-01"
     end_date = "2024-12-31"
 
@@ -22,7 +22,7 @@ def main():
     )
 
     df_signals = df_signals.dropna()
-    df_signals = create_orders(df_signals, use_kelly=True, p_win=0.6, base_risk=0.1)
+    df_signals = create_orders(df_signals, use_kelly=True, p_win=0.6, ratio_win_loss=1.5, fraction_of_kelly=2, base_risk=0.1, capital=1e6)
 
     print("Data fetched and signal generated. Head of DataFrame:")
     print(df_signals.head())
