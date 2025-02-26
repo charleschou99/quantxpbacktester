@@ -22,7 +22,7 @@ def main():
     )
 
     df_signals = df_signals.dropna()
-    df_signals = create_orders(df_signals, use_kelly=True, p_win=0.6, base_risk=0.05)
+    df_signals = create_orders(df_signals, use_kelly=True, p_win=0.6, base_risk=0.1)
 
     print("Data fetched and signal generated. Head of DataFrame:")
     print(df_signals.head())
@@ -35,7 +35,7 @@ def main():
         data=df_signals,
         frequency=timeframe,
         symbol=symbol,
-        initial_capital=1e5,
+        initial_capital=1e6,
         risk_manager=risk_mgr
     )
 

@@ -12,7 +12,6 @@ STOREPATH = os.path.join(r'C:\Users\charl\BacktestData', 'MultiFactor')
 
 def main():
 
-
     parser = argparse.ArgumentParser(
         description="Launch a Multi-Factor Backtest and return the result file name."
     )
