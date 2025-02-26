@@ -211,7 +211,7 @@ class Backtester:
         with open(file_path, 'w') as f:
             json.dump(results, f, indent=2)
 
-        print(f"Backtest and risk metrics saved to {file_path}")
+        # print(f"Backtest and risk metrics saved to {file_path}")
 
     def _update_positions(self, order: Order):
         current_qty, current_avg_px = self.positions[order.symbol]
