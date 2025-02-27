@@ -138,6 +138,7 @@ class Backtester:
         self.equity_curve = []
         self.pnl_curve = []   # daily PnL
         self.risk_metrics = {}
+        self.sharpepa = {}
 
         # Ensure datetime index
         if not pd.api.types.is_datetime64_any_dtype(self.data.index):
@@ -202,7 +203,8 @@ class Backtester:
             'equity_curve': eq_df.to_json(orient='records', date_format='iso'),
             'pnl_curve': pnl_df.to_json(orient='records', date_format='iso'),
             'order_history': [o.to_dict() for o in self.order_history],
-            'risk_metrics': self.risk_metrics
+            'risk_metrics': self.risk_metrics,
+            'sharpe_per_year': self.sharpepa
         }
 
         file_name = f"{self.symbol}_{self.frequency}_{dt.datetime.now().strftime('%Y%m%d_%H%M')}.json"
@@ -236,22 +238,8 @@ class Backtester:
         position_value = qty * price
         return self.cash + position_value
 
-    def compute_performance_metrics(self) -> dict:
-        """
-        Summarizes performance with both standard hedge-fund style metrics and additional:
-         - Bias per Trade: (# of buys - # of sells) / total trades
-         - Turnover: sum of absolute notional traded / average equity
-         - Calmar ratio: cagr / abs(max_drawdown)
-         - Volatility: annualized standard deviation of returns
 
-        'Bias per trade' tells us if there's a net directional bias or advantage
-        from each trade (are trades systematically profitable/long/short?).
-        'Turnover' indicates how frequently we buy/sell relative to our average capital.
-        """
-
-        eq_series = self.equity_curve['equity']
-        rets = eq_series.pct_change().fillna(0)
-
+    def _get_annual_factor(self):
         freq = self.frequency
         if freq == '1D':
             annual_factor = 252
@@ -269,6 +257,25 @@ class Backtester:
             annual_factor = 1638
         else:
             annual_factor = 252
+        return annual_factor
+
+    def compute_performance_metrics(self) -> dict:
+        """
+        Summarizes performance with both standard hedge-fund style metrics and additional:
+         - Bias per Trade: (# of buys - # of sells) / total trades
+         - Turnover: sum of absolute notional traded / average equity
+         - Calmar ratio: cagr / abs(max_drawdown)
+         - Volatility: annualized standard deviation of returns
+
+        'Bias per trade' tells us if there's a net directional bias or advantage
+        from each trade (are trades systematically profitable/long/short?).
+        'Turnover' indicates how frequently we buy/sell relative to our average capital.
+        """
+
+        eq_series = self.equity_curve['equity']
+        rets = eq_series.pct_change().fillna(0)
+
+        annual_factor = self._get_annual_factor()
 
         start_val = eq_series.iloc[0]
         end_val = eq_series.iloc[-1]
@@ -312,6 +319,7 @@ class Backtester:
         n_sells = sum(1 for o in self.order_history if o.side == 'SELL')
         total_trades = len(self.order_history)
         bias_per_trade = (n_buys - n_sells) / total_trades if total_trades > 0 else 0
+        self.sharpepa = self._compute_sharpe_per_year(eq_series)
 
         metrics = {
             'CAGR': cagr,
@@ -322,10 +330,41 @@ class Backtester:
             'Volatility': vol,
             'Calmar': calmar,
             'Turnover': turnover,
-            'BiasPerTrade': bias_per_trade
+            'BiasPerTrade': bias_per_trade,
         }
 
         return metrics
+
+    def _compute_sharpe_per_year(self, equity_series: pd.Series) -> dict:
+        """
+        For each calendar year in the equity series, compute the Sharpe ratio, assuming daily data.
+
+        Returns a dictionary: {year: sharpe_for_that_year}
+        """
+        if len(equity_series) < 2:
+            return {}
+
+        # We'll assume daily for simplicity, i.e. annual_factor=252
+        annual_factor = self._get_annual_factor()
+
+        # Group by equity_series.index.year
+        sharpe_dict = {}
+        grouped = equity_series.groupby(equity_series.index.year)
+        for year, subseries in grouped:
+            if len(subseries) < 2:
+                sharpe_dict[year] = 0.0
+                continue
+
+            rets = subseries.pct_change().dropna()
+            # If the year starts or ends in the middle, we'll still compute
+            # average daily returns * 252 / stdev * sqrt(252)
+            mean_ret = rets.mean() * annual_factor
+            std_ret = rets.std() * np.sqrt(annual_factor)
+            yearly_sharpe = mean_ret / std_ret if std_ret != 0 else 0
+
+            sharpe_dict[year] = yearly_sharpe
+
+        return sharpe_dict
 
     def plot_equity_curve(self):
         """
