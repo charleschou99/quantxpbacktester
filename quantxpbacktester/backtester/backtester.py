@@ -139,6 +139,7 @@ class Backtester:
         self.pnl_curve = []   # daily PnL
         self.risk_metrics = {}
         self.sharpepa = {}
+        self.metricspa = {}
 
         # Ensure datetime index
         if not pd.api.types.is_datetime64_any_dtype(self.data.index):
@@ -204,7 +205,8 @@ class Backtester:
             'pnl_curve': pnl_df.to_json(orient='records', date_format='iso'),
             'order_history': [o.to_dict() for o in self.order_history],
             'risk_metrics': self.risk_metrics,
-            'sharpe_per_year': self.sharpepa
+            'sharpe_per_year': self.sharpepa,
+            'metrics_per_year':self.metricspa
         }
 
         file_name = f"{self.symbol}_{self.frequency}_{dt.datetime.now().strftime('%Y%m%d_%H%M')}.json"
@@ -320,6 +322,7 @@ class Backtester:
         total_trades = len(self.order_history)
         bias_per_trade = (n_buys - n_sells) / total_trades if total_trades > 0 else 0
         self.sharpepa = self._compute_sharpe_per_year(eq_series)
+        self.metricspa = self._compute_yearly_metrics(eq_series)
 
         metrics = {
             'CAGR': cagr,
@@ -365,6 +368,138 @@ class Backtester:
             sharpe_dict[year] = yearly_sharpe
 
         return sharpe_dict
+
+    def _compute_yearly_metrics(self, equity_series: pd.Series) -> dict:
+        """
+        For each calendar year in equity_series, compute multiple metrics:
+          - Return (approx. partial-year CAGR)
+          - Sharpe
+          - Sortino
+          - Max Drawdown
+          - Calmar (Return / abs(MaxDD))
+          - Volatility (annualized standard deviation)
+          - Turnover (sum of abs notional traded / average equity in that year)
+          - Bias Per Trade ((# buys - # sells) / total trades) in that year
+
+        Returns a dict of the form:
+          {
+            2020: {
+              "Return": float,
+              "Sharpe": float,
+              "Sortino": float,
+              "MaxDrawdown": float,
+              "Calmar": float,
+              "Volatility": float,
+              "Turnover": float,
+              "BiasPerTrade": float
+            },
+            2021: { ... },
+            ...
+          }
+        """
+
+        if len(equity_series) < 2:
+            return {}
+
+        annual_factor = self._get_annual_factor()
+        yearly_metrics = {}
+
+        # Group the equity curve by year, e.g. {2020: Series(...), 2021: Series(...)}
+        groups = equity_series.groupby(equity_series.index.year)
+
+        for year, sub_eq in groups:
+            if len(sub_eq) < 2:
+                # If there's not enough data, store zeros
+                yearly_metrics[year] = {
+                    "Return": 0.0,
+                    "Sharpe": 0.0,
+                    "Sortino": 0.0,
+                    "MaxDrawdown": 0.0,
+                    "Calmar": 0.0,
+                    "Volatility": 0.0,
+                    "Turnover": 0.0,
+                    "BiasPerTrade": 0.0
+                }
+                continue
+
+            # --- 1) Basic returns, Sharpe, Sortino, Volatility ---
+            rets = sub_eq.pct_change().dropna()
+            mean_ret = rets.mean() * annual_factor
+            std_ret = rets.std() * np.sqrt(annual_factor)
+
+            yearly_sharpe = mean_ret / std_ret if std_ret != 0 else 0
+
+            downside_rets = rets[rets < 0]
+            std_downside = downside_rets.std() * np.sqrt(annual_factor)
+            yearly_sortino = mean_ret / std_downside if std_downside != 0 else 0
+
+            # Volatility is the annualized std of returns
+            yearly_vol = std_ret
+
+            # --- 2) Partial-Year Return (mini-CAGR for that sub-year) ---
+            start_val = sub_eq.iloc[0]
+            end_val = sub_eq.iloc[-1]
+            days_count = (sub_eq.index[-1] - sub_eq.index[0]).days
+            if start_val != 0 and days_count > 0:
+                # approximate annualization for partial-year
+                ret_for_that_year = (end_val / start_val) ** (365 / days_count) - 1
+            else:
+                ret_for_that_year = 0.0
+
+            # --- 3) Max Drawdown for that year ---
+            rolling_max = sub_eq.cummax()
+            dd_series = (sub_eq - rolling_max) / rolling_max  # typically ≤ 0
+            yearly_max_dd = dd_series.min()  # e.g. -0.15
+
+            # Calmar = (annualized return) / abs(MDD)
+            # For partial-year, we use ret_for_that_year. If MDD is near 0 or 0, handle carefully.
+            if yearly_max_dd < 0:
+                yearly_calmar = ret_for_that_year / abs(yearly_max_dd) if abs(yearly_max_dd) > 1e-9 else 0
+            else:
+                yearly_calmar = 0
+
+            # --- 4) Turnover & Bias per Trade for that year ---
+            # Filter self.order_history to only trades whose timestamp is in 'year'
+            # We assume 'o.timestamp' is a Python datetime or can be parsed.
+            orders_for_year = []
+            for o in self.order_history:
+                # Make sure 'timestamp' is a datetime object
+                # If it's a string, convert with pd.to_datetime
+                ts = o.timestamp if isinstance(o.timestamp, pd.Timestamp) else pd.to_datetime(o.timestamp)
+                if ts.year == year:
+                    orders_for_year.append(o)
+
+            # Sum absolute notional for that year
+            total_abs_notional = 0.0
+            for o in orders_for_year:
+                notional = abs(o.fill_price * o.quantity)
+                total_abs_notional += notional
+
+            mean_equity_for_year = sub_eq.mean()  # average equity for that sub-year
+            yearly_turnover = total_abs_notional / mean_equity_for_year if mean_equity_for_year != 0 else 0
+
+            # Bias Per Trade = (# buys - # sells) / total_trades in that year
+            n_buys = sum(1 for o in orders_for_year if o.side == 'BUY')
+            n_sells = sum(1 for o in orders_for_year if o.side == 'SELL')
+            total_trades_for_year = len(orders_for_year)
+            if total_trades_for_year > 0:
+                yearly_bias_per_trade = (n_buys - n_sells) / total_trades_for_year
+            else:
+                yearly_bias_per_trade = 0.0
+
+            # --- 5) Store them in the dictionary for this year ---
+            yearly_metrics[year] = {
+                "Return": ret_for_that_year,
+                "Sharpe": yearly_sharpe,
+                "Sortino": yearly_sortino,
+                "MaxDrawdown": yearly_max_dd,
+                "Calmar": yearly_calmar,
+                "Volatility": yearly_vol,
+                "Turnover": yearly_turnover,
+                "BiasPerTrade": yearly_bias_per_trade
+            }
+
+        return yearly_metrics
 
     def plot_equity_curve(self):
         """
