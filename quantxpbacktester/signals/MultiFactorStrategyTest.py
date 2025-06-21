@@ -5,7 +5,7 @@ from quantxpbacktester.backtester.backtester import *
 
 def main():
     # Parameters for data fetch
-    symbol = "AAPL"
+    symbol = "SPY"
     period = 30
     timeframe = "1D"
     start_date = "2020-01-01"
