@@ -16,6 +16,7 @@ from typing import Tuple, List, Dict, Optional, Union
 from scipy import stats
 from statsmodels.tsa.stattools import adfuller, kpss
 from statsmodels.tsa.vector_ar.vecm import coint_johansen
+from quantxpbacktester.data.Alpaca import AlpacaDataClient
 import warnings
 warnings.filterwarnings('ignore')
 
@@ -23,7 +24,7 @@ warnings.filterwarnings('ignore')
 def test_unit_root(series: pd.Series, test_type: str = 'adf', **kwargs) -> Dict:
     """
     Test for unit root in a time series using ADF or KPSS test.
-    
+
     Parameters:
     -----------
     series : pd.Series
@@ -31,9 +32,9 @@ def test_unit_root(series: pd.Series, test_type: str = 'adf', **kwargs) -> Dict:
     test_type : str
         'adf' for Augmented Dickey-Fuller test
         'kpss' for KPSS test
-    **kwargs : 
+    **kwargs :
         Additional arguments for the test functions
-        
+
     Returns:
     --------
     Dict containing test results and p-value
@@ -51,7 +52,7 @@ def test_unit_root(series: pd.Series, test_type: str = 'adf', **kwargs) -> Dict:
             'null_hypothesis': 'Series has unit root (non-stationary)',
             'alternative_hypothesis': 'Series is stationary'
         }
-    
+
     elif test_type.lower() == 'kpss':
         # KPSS test: H0 = series is stationary
         # H1 = series has unit root (non-stationary)
@@ -65,7 +66,7 @@ def test_unit_root(series: pd.Series, test_type: str = 'adf', **kwargs) -> Dict:
             'null_hypothesis': 'Series is stationary',
             'alternative_hypothesis': 'Series has unit root (non-stationary)'
         }
-    
+
     else:
         raise ValueError("test_type must be 'adf' or 'kpss'")
 
@@ -73,24 +74,24 @@ def test_unit_root(series: pd.Series, test_type: str = 'adf', **kwargs) -> Dict:
 def test_integration_order(df: pd.DataFrame, max_order: int = 2) -> Dict[str, Dict]:
     """
     Test the integration order of multiple time series.
-    
+
     Parameters:
     -----------
     df : pd.DataFrame
         DataFrame with columns representing different time series
     max_order : int
         Maximum integration order to test
-        
+
     Returns:
     --------
     Dict with integration order results for each series
     """
     results = {}
-    
+
     for col in df.columns:
         series = df[col]
         integration_order = 0
-        
+
         # Test original series
         adf_result = test_unit_root(series, 'adf')
         if adf_result['is_stationary']:
@@ -99,23 +100,23 @@ def test_integration_order(df: pd.DataFrame, max_order: int = 2) -> Dict[str, Di
                 'tests': [adf_result]
             }
             continue
-        
+
         # Test first differences
         diff1 = series.diff().dropna()
         adf_result_diff1 = test_unit_root(diff1, 'adf')
-        
+
         if adf_result_diff1['is_stationary']:
             results[col] = {
                 'integration_order': 1,
                 'tests': [adf_result, adf_result_diff1]
             }
             continue
-        
+
         # Test second differences if max_order >= 2
         if max_order >= 2:
             diff2 = diff1.diff().dropna()
             adf_result_diff2 = test_unit_root(diff2, 'adf')
-            
+
             if adf_result_diff2['is_stationary']:
                 results[col] = {
                     'integration_order': 2,
@@ -131,15 +132,15 @@ def test_integration_order(df: pd.DataFrame, max_order: int = 2) -> Dict[str, Di
                 'integration_order': '>1',
                 'tests': [adf_result, adf_result_diff1]
             }
-    
+
     return results
 
 
-def engle_granger_test(series1: pd.Series, series2: pd.Series, 
+def engle_granger_test(series1: pd.Series, series2: pd.Series,
                       trend: str = 'c', maxlag: Optional[int] = None) -> Dict:
     """
     Perform Engle-Granger cointegration test.
-    
+
     Parameters:
     -----------
     series1 : pd.Series
@@ -147,10 +148,10 @@ def engle_granger_test(series1: pd.Series, series2: pd.Series,
     series2 : pd.Series
         Second time series
     trend : str
-        'c' for constant, 'nc' for no constant, 'ct' for constant and trend
+        'c' for constant, 'n' for no constant, 'ct' for constant and trend
     maxlag : int, optional
         Maximum lag for ADF test on residuals
-        
+
     Returns:
     --------
     Dict containing test results
@@ -164,12 +165,12 @@ def engle_granger_test(series1: pd.Series, series2: pd.Series,
             'test_statistic': np.nan,
             'is_cointegrated': False
         }
-    
+
     y = aligned_data.iloc[:, 0]
     x = aligned_data.iloc[:, 1]
-    
+
     # Run OLS regression
-    if trend == 'nc':
+    if trend == 'n':
         # No constant
         model = np.polyfit(x, y, 0)
         residuals = y - model[0] * x
@@ -183,10 +184,10 @@ def engle_granger_test(series1: pd.Series, series2: pd.Series,
         x_with_const = np.column_stack([x, np.ones(len(x))])
         model = np.linalg.lstsq(x_with_const, y, rcond=None)[0]
         residuals = y - (model[0] * x + model[1])
-    
+
     # Test residuals for unit root
-    adf_result = adfuller(residuals, regression='nc', maxlag=maxlag)
-    
+    adf_result = adfuller(residuals, regression='n', maxlag=maxlag)
+
     return {
         'test_type': f'Engle-Granger ({trend})',
         'test_statistic': adf_result[0],
@@ -201,11 +202,11 @@ def engle_granger_test(series1: pd.Series, series2: pd.Series,
     }
 
 
-def johansen_test(df: pd.DataFrame, k_ar_diff: int = 1, 
+def johansen_test(df: pd.DataFrame, k_ar_diff: int = 1,
                   det_order: int = -1, maxlag: Optional[int] = None) -> Dict:
     """
     Perform Johansen cointegration test for multiple time series.
-    
+
     Parameters:
     -----------
     df : pd.DataFrame
@@ -218,14 +219,14 @@ def johansen_test(df: pd.DataFrame, k_ar_diff: int = 1,
          1: linear trend
     maxlag : int, optional
         Maximum lag for the test
-        
+
     Returns:
     --------
     Dict containing test results
     """
     # Remove any NaN values
     clean_df = df.dropna()
-    
+
     if len(clean_df) < 50:
         return {
             'error': 'Insufficient data for reliable Johansen test',
@@ -234,26 +235,40 @@ def johansen_test(df: pd.DataFrame, k_ar_diff: int = 1,
             'p_values': [],
             'cointegration_rank': 0
         }
-    
+
     try:
         result = coint_johansen(clean_df.values, det_order, k_ar_diff)
-        
+
         # Extract results
         trace_stats = result.lr1
         max_eigen_stats = result.lr2
         critical_values = result.cvt
         max_eigen_critical = result.cvm
+
+        # Calculate p-values for trace statistics
+        # The trace statistic follows a chi-square distribution
+        # Degrees of freedom depend on the number of variables and rank
+        n_vars = clean_df.shape[1]
+        trace_p_values = []
         
+        for i, trace_stat in enumerate(trace_stats):
+            # Degrees of freedom for trace test: (n - r) * (n - r + 1) / 2
+            # where n is number of variables, r is the rank being tested
+            df_trace = (n_vars - i) * (n_vars - i + 1) // 2
+            p_value = 1 - stats.chi2.cdf(trace_stat, df_trace)
+            trace_p_values.append(p_value)
+
         # Determine cointegration rank
         coint_rank = 0
         for i, (trace_stat, crit_val) in enumerate(zip(trace_stats, critical_values[:, 1])):
             if trace_stat > crit_val:
                 coint_rank = i + 1
-        
+
         return {
             'test_type': 'Johansen',
             'trace_statistics': trace_stats,
             'max_eigen_statistics': max_eigen_stats,
+            'trace_p_values': trace_p_values,
             'critical_values_trace': critical_values,
             'critical_values_max_eigen': max_eigen_critical,
             'cointegration_rank': coint_rank,
@@ -262,7 +277,7 @@ def johansen_test(df: pd.DataFrame, k_ar_diff: int = 1,
             'det_order': det_order,
             'k_ar_diff': k_ar_diff
         }
-        
+
     except Exception as e:
         return {
             'error': f'Johansen test failed: {str(e)}',
@@ -273,75 +288,75 @@ def johansen_test(df: pd.DataFrame, k_ar_diff: int = 1,
         }
 
 
-def comprehensive_cointegration_analysis(df: pd.DataFrame, 
+def comprehensive_cointegration_analysis(df: pd.DataFrame,
                                         symbols: Optional[List[str]] = None) -> Dict:
     """
     Perform comprehensive cointegration analysis on a DataFrame of price series.
-    
+
     Parameters:
     -----------
     df : pd.DataFrame
         DataFrame with price series as columns
     symbols : List[str], optional
         List of symbol names. If None, uses DataFrame column names
-        
+
     Returns:
     --------
     Dict containing comprehensive analysis results
     """
     if symbols is None:
         symbols = df.columns.tolist()
-    
+
     # Ensure symbols is a list
     if not isinstance(symbols, list):
         raise ValueError("symbols must be a list of strings")
-    
+
     results = {
         'integration_analysis': {},
         'pairwise_cointegration': {},
         'johansen_analysis': {},
         'summary': {}
     }
-    
+
     # 1. Test integration order for each series
     print("Testing integration order...")
     results['integration_analysis'] = test_integration_order(df)
-    
+
     # 2. Pairwise Engle-Granger tests
     print("Performing pairwise cointegration tests...")
     n_symbols = len(symbols)
     cointegrated_pairs = []
-    
+
     for i in range(n_symbols):
         for j in range(i+1, n_symbols):
             symbol1, symbol2 = symbols[i], symbols[j]
-            
+
             # Test with constant
             eg_const = engle_granger_test(df[symbol1], df[symbol2], trend='c')
-            
+
             # Test without constant
             eg_nc = engle_granger_test(df[symbol1], df[symbol2], trend='nc')
-            
+
             # Test with constant and trend
             eg_ct = engle_granger_test(df[symbol1], df[symbol2], trend='ct')
-            
+
             pair_key = f"{symbol1}_vs_{symbol2}"
             results['pairwise_cointegration'][pair_key] = {
                 'with_constant': eg_const,
                 'without_constant': eg_nc,
                 'with_trend': eg_ct,
-                'any_cointegrated': any([eg_const['is_cointegrated'], 
-                                       eg_nc['is_cointegrated'], 
+                'any_cointegrated': any([eg_const['is_cointegrated'],
+                                       eg_nc['is_cointegrated'],
                                        eg_ct['is_cointegrated']])
             }
-            
+
             if results['pairwise_cointegration'][pair_key]['any_cointegrated']:
                 cointegrated_pairs.append(pair_key)
-    
+
     # 3. Johansen test for all series together
     print("Performing Johansen test...")
     results['johansen_analysis'] = johansen_test(df)
-    
+
     # 4. Summary statistics
     results['summary'] = {
         'total_series': n_symbols,
@@ -349,19 +364,19 @@ def comprehensive_cointegration_analysis(df: pd.DataFrame,
         'num_cointegrated_pairs': len(cointegrated_pairs),
         'cointegration_rate': len(cointegrated_pairs) / (n_symbols * (n_symbols - 1) / 2) if n_symbols > 1 else 0
     }
-    
+
     return results
 
 
 def generate_cointegration_report(analysis_results: Dict) -> str:
     """
     Generate a formatted report from cointegration analysis results.
-    
+
     Parameters:
     -----------
     analysis_results : Dict
         Results from comprehensive_cointegration_analysis
-        
+
     Returns:
     --------
     Formatted report string
@@ -370,13 +385,13 @@ def generate_cointegration_report(analysis_results: Dict) -> str:
     report.append("=" * 60)
     report.append("COINTEGRATION ANALYSIS REPORT")
     report.append("=" * 60)
-    
+
     # Integration order summary
     report.append("\n1. INTEGRATION ORDER ANALYSIS")
     report.append("-" * 30)
     for symbol, result in analysis_results['integration_analysis'].items():
         report.append(f"{symbol}: I({result['integration_order']})")
-    
+
     # Pairwise cointegration summary
     report.append("\n2. PAIRWISE COINTEGRATION TESTS")
     report.append("-" * 35)
@@ -389,7 +404,7 @@ def generate_cointegration_report(analysis_results: Dict) -> str:
                                 f"Cointegrated = {test_result['is_cointegrated']}")
                 else:
                     report.append(f"  {test_name}: {test_result['error']}")
-    
+
     # Johansen test summary
     report.append("\n3. JOHANSEN COINTEGRATION TEST")
     report.append("-" * 32)
@@ -397,11 +412,11 @@ def generate_cointegration_report(analysis_results: Dict) -> str:
     if 'error' not in johansen:
         report.append(f"Cointegration Rank: {johansen['cointegration_rank']}")
         report.append("Trace Statistics:")
-        for i, stat in enumerate(johansen['trace_statistics']):
-            report.append(f"  Rank {i}: {stat:.4f}")
+        for i, (stat, p_val) in enumerate(zip(johansen['trace_statistics'], johansen['trace_p_values'])):
+            report.append(f"  Rank {i}: {stat:.4f} (p-value: {p_val:.4f})")
     else:
         report.append(f"Error: {johansen['error']}")
-    
+
     # Summary statistics
     report.append("\n4. SUMMARY")
     report.append("-" * 10)
@@ -409,21 +424,21 @@ def generate_cointegration_report(analysis_results: Dict) -> str:
     report.append(f"Total Series: {summary['total_series']}")
     report.append(f"Cointegrated Pairs: {summary['num_cointegrated_pairs']}")
     report.append(f"Cointegration Rate: {summary['cointegration_rate']:.2%}")
-    
+
     if summary['cointegrated_pairs']:
         report.append("Cointegrated Pairs:")
         for pair in summary['cointegrated_pairs']:
             report.append(f"  - {pair}")
-    
+
     return "\n".join(report)
 
 
-def find_best_cointegrated_pairs(df: pd.DataFrame, 
+def find_best_cointegrated_pairs(df: pd.DataFrame,
                                 min_p_value: float = 0.05,
                                 symbols: Optional[List[str]] = None) -> List[Dict]:
     """
     Find the best cointegrated pairs based on p-values.
-    
+
     Parameters:
     -----------
     df : pd.DataFrame
@@ -432,28 +447,28 @@ def find_best_cointegrated_pairs(df: pd.DataFrame,
         Maximum p-value threshold for cointegration
     symbols : List[str], optional
         List of symbol names
-        
+
     Returns:
     --------
     List of dictionaries with pair information and test results
     """
     if symbols is None:
         symbols = df.columns.tolist()
-    
+
     # Ensure symbols is a list
     if not isinstance(symbols, list):
         raise ValueError("symbols must be a list of strings")
-    
+
     best_pairs = []
     n_symbols = len(symbols)
-    
+
     for i in range(n_symbols):
         for j in range(i+1, n_symbols):
             symbol1, symbol2 = symbols[i], symbols[j]
-            
+
             # Test with constant (most common)
             eg_result = engle_granger_test(df[symbol1], df[symbol2], trend='c')
-            
+
             if eg_result['is_cointegrated'] and eg_result['p_value'] <= min_p_value:
                 best_pairs.append({
                     'symbol1': symbol1,
@@ -463,44 +478,85 @@ def find_best_cointegrated_pairs(df: pd.DataFrame,
                     'cointegration_vector': eg_result['cointegration_vector'],
                     'residuals': eg_result['residuals']
                 })
-    
+
     # Sort by p-value (lowest first)
     best_pairs.sort(key=lambda x: x['p_value'])
-    
+
     return best_pairs
 
 
 # Example usage function
-def example_cointegration_analysis():
+def example_cointegration_analysis(df):
     """
     Example function showing how to use the cointegration testing module.
     """
     # Create sample data (replace with your actual data)
-    np.random.seed(42)
-    dates = pd.date_range('2020-01-01', periods=500, freq='D')
-    
-    # Create cointegrated series
-    x = np.cumsum(np.random.randn(500)) + 100
-    y = 2 * x + np.random.randn(500) * 0.1  # y = 2x + noise
-    z = np.cumsum(np.random.randn(500)) + 50  # Independent series
-    
-    df = pd.DataFrame({
-        'SPY': x,
-        'QQQ': y,
-        'GLD': z
-    }, index=dates)
-    
+    # np.random.seed(42)
+    # dates = pd.date_range('2020-01-01', periods=500, freq='D')
+    #
+    # # Create cointegrated series
+    # x = np.cumsum(np.random.randn(500)) + 100
+    # y = 2 * x + np.random.randn(500) * 0.1  # y = 2x + noise
+    # z = np.cumsum(np.random.randn(500)) + 50  # Independent series
+    #
+    # df = pd.DataFrame({
+    #     'SPY': x,
+    #     'QQQ': y,
+    #     'GLD': z
+    # }, index=dates)
+
     # Run comprehensive analysis
     results = comprehensive_cointegration_analysis(df)
-    
+
     # Generate report
     report = generate_cointegration_report(results)
     print(report)
-    
+
     # Find best pairs
     best_pairs = find_best_cointegrated_pairs(df)
     print("\nBest Cointegrated Pairs:")
     for pair in best_pairs:
         print(f"{pair['symbol1']} vs {pair['symbol2']}: p-value = {pair['p_value']:.6f}")
-    
+
     return results, best_pairs
+
+if __name__ == "__main__":
+    client = AlpacaDataClient()
+
+    # Define symbols to analyze
+    symbols = ['SPY', 'NVDA', 'AAPL', 'TSLA']
+
+    # Fetch data for each symbol and extract close prices
+    close_prices = {}
+
+    for symbol in symbols:
+        print(f"Fetching data for {symbol}...")
+        try:
+            df_symbol = client.fetch_bars(
+                symbol=symbol,
+                timeframe='1D',
+                start_date="2020-01-01",
+                end_date="2025-06-01",
+                extended_hours=False
+            )
+
+            # Extract close prices
+            if 'close' in df_symbol.columns:
+                close_prices[symbol] = np.log(df_symbol['close'])
+            else:
+                print(f"Warning: No 'close' column found for {symbol}")
+
+        except Exception as e:
+            print(f"Error fetching data for {symbol}: {e}")
+
+    # Create DataFrame with close prices
+    if close_prices:
+        df = pd.DataFrame(close_prices)
+        print(f"\nCreated DataFrame with shape: {df.shape}")
+        print(f"Columns: {df.columns.tolist()}")
+        print(f"Date range: {df.index.min()} to {df.index.max()}")
+
+        # Run cointegration analysis
+        results, best_pairs = example_cointegration_analysis(df)
+    else:
+        print("No data was successfully fetched for any symbol.")
